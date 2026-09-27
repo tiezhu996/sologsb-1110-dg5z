@@ -3,7 +3,9 @@ import type { WoodBoard } from '../types/wood-board';
 import type { SoundChamber } from '../types/sound-chamber';
 import type { LacquerLayer } from '../types/lacquer-layer';
 import type { Stringing } from '../types/stringing';
+import type { DeliveryArchive } from '../types/delivery';
 import { cumulativeThickness } from './layer';
+import { evaluateAcceptance, toBoardSnapshots, toChamberSnapshot, toLacquerSnapshots, toToneSnapshot } from './acceptance';
 
 const DAY = 86_400_000;
 const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString();
@@ -130,25 +132,105 @@ export const SEED_STRINGINGS: Stringing[] = [
   },
 ];
 
+/**
+ * 示例交付档案：
+ * Q-2502 已撤销 V1（三遍灰胎交付后被退回）+ 已交付 V2（补髹纯生漆面层后重新交付），演示版本流转；
+ * Q-2504 待交付（未上弦），演示门槛未达标先存档。
+ */
+function buildSeedDeliveries(layers: LacquerLayer[]): DeliveryArchive[] {
+  const byGuqin = (no: string) => layers.filter((l) => l.guqinNo === no);
+  const q2502Layers = byGuqin('Q-2502');
+  const v1Layers = q2502Layers.filter((l) => l.seq <= 3);
+  const q2502Boards = SEED_BOARDS.filter((b) => b.guqinNo === 'Q-2502');
+  const q2502Chamber = SEED_CHAMBERS.find((c) => c.guqinNo === 'Q-2502');
+  const q2502Stringing = SEED_STRINGINGS.find((s) => s.guqinNo === 'Q-2502');
+
+  // V1 交付时的旧弦旧评语（退回重髹前的状态，与当前上弦记录不同，体现档案不随工序记录变动）
+  const v1Stringing: Stringing | undefined = q2502Stringing
+    ? {
+        ...q2502Stringing,
+        strungAt: daysAgo(26),
+        sanNote: '散音亮而略噪，新弦未开。',
+        anNote: '按音清越，走手略涩。',
+        fanNote: '泛音通透。',
+        nineVirtues: '透、清见长；古、静、润不足。',
+      }
+    : undefined;
+
+  const v1: DeliveryArchive = {
+    id: 'delivery-001',
+    guqinNo: 'Q-2502',
+    version: 1,
+    status: '已撤销',
+    checks: evaluateAcceptance(v1Layers, v1Stringing),
+    inspector: '周砚秋',
+    remark: '三遍灰胎交付',
+    createdAt: daysAgo(20),
+    deliveredAt: daysAgo(20),
+    revokedAt: daysAgo(14),
+    revokeReason: '客户退回：要求补髹纯生漆面层后重新交付',
+    boards: toBoardSnapshots(q2502Boards),
+    chamber: toChamberSnapshot(q2502Chamber),
+    lacquerLayers: toLacquerSnapshots(v1Layers),
+    lacquerTotalMm: cumulativeThickness(v1Layers),
+    tone: toToneSnapshot(v1Stringing),
+  };
+
+  const v2: DeliveryArchive = {
+    id: 'delivery-002',
+    guqinNo: 'Q-2502',
+    version: 2,
+    status: '已交付',
+    checks: evaluateAcceptance(q2502Layers, q2502Stringing),
+    inspector: '周砚秋',
+    remark: '补髹纯生漆面层后重新交付',
+    createdAt: daysAgo(5),
+    deliveredAt: daysAgo(5),
+    boards: toBoardSnapshots(q2502Boards),
+    chamber: toChamberSnapshot(q2502Chamber),
+    lacquerLayers: toLacquerSnapshots(q2502Layers),
+    lacquerTotalMm: cumulativeThickness(q2502Layers),
+    tone: toToneSnapshot(q2502Stringing),
+  };
+
+  const pending: DeliveryArchive = {
+    id: 'delivery-003',
+    guqinNo: 'Q-2504',
+    version: 0,
+    status: '待交付',
+    checks: evaluateAcceptance(byGuqin('Q-2504'), SEED_STRINGINGS.find((s) => s.guqinNo === 'Q-2504')),
+    inspector: '林听雪',
+    remark: '待上弦后复检',
+    createdAt: daysAgo(2),
+    boards: [],
+    lacquerLayers: [],
+    lacquerTotalMm: 0,
+  };
+
+  return [v1, v2, pending];
+}
+
 /** 首次打开（表内无数据）时写入示例数据；已有数据则不动 */
 export async function seedIfEmpty(): Promise<void> {
   const flag = await db.meta.get('seeded');
   if (flag) {
     return;
   }
-  const [boardCount, chamberCount, lacquerCount, stringingCount] = await Promise.all([
+  const [boardCount, chamberCount, lacquerCount, stringingCount, deliveryCount] = await Promise.all([
     db.boards.count(),
     db.chambers.count(),
     db.lacquers.count(),
     db.stringings.count(),
+    db.deliveries.count(),
   ]);
   const layers = withCumulative(buildSeedLayers());
 
-  await db.transaction('rw', db.boards, db.chambers, db.lacquers, db.stringings, db.meta, async () => {
+  await db.transaction('rw', [db.boards, db.chambers, db.lacquers, db.stringings, db.deliveries, db.meta], async () => {
     if (boardCount === 0) await db.boards.bulkPut(SEED_BOARDS);
     if (chamberCount === 0) await db.chambers.bulkPut(SEED_CHAMBERS);
     if (lacquerCount === 0) await db.lacquers.bulkPut(layers);
     if (stringingCount === 0) await db.stringings.bulkPut(SEED_STRINGINGS);
+    if (deliveryCount === 0) await db.deliveries.bulkPut(buildSeedDeliveries(layers));
     await db.meta.put({ key: 'seeded', value: new Date().toISOString() });
   });
 }
