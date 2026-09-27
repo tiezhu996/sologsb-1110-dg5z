@@ -24,8 +24,8 @@ docker compose down
 | 框架 | Vue 3 + TypeScript（`<script setup>`） |
 | 构建 | Vite 6（`npm run build` 含 `vue-tsc --noEmit` 类型检查） |
 | UI | Element Plus 2 |
-| 路由 | Vue Router 4（5 条业务路由 + 404） |
-| 状态 | Pinia（boardStore / chamberStore / lacquerStore / stringingStore） |
+| 路由 | Vue Router 4（6 条业务路由 + 404） |
+| 状态 | Pinia（boardStore / chamberStore / lacquerStore / stringingStore / deliveryStore） |
 | 存储 | IndexedDB（Dexie，库名 `gbguqin-db`） |
 | 托管 | nginx:alpine（多阶段构建，SPA try_files + gzip） |
 
@@ -49,13 +49,13 @@ npm run build    # 类型检查 + 生产构建
 │   ├── nginx.conf             # try_files SPA 回退 + gzip
 │   ├── public/favicon.svg
 │   └── src/
-│       ├── types/             # wood-board / sound-chamber / lacquer-layer / stringing（+ ui.ts）
-│       ├── stores/            # boardStore / chamberStore / lacquerStore / stringingStore
+│       ├── types/             # wood-board / sound-chamber / lacquer-layer / stringing / delivery（+ ui.ts）
+│       ├── stores/            # boardStore / chamberStore / lacquerStore / stringingStore / deliveryStore
 │       ├── components/common/ # DimensionChart / LayerStack / ToneTextEditor / FilterBar / StatBadge / ProcessTimeline / EmptyPanel
 │       ├── hooks/             # useGuqinFilter / useStageProgress
-│       ├── pages/             # WorkshopBoard / BoardList / ChamberEditor / LacquerLedger / StringingLog（+ NotFound）
+│       ├── pages/             # WorkshopBoard / BoardList / ChamberEditor / LacquerLedger / StringingLog / DeliveryDesk（+ NotFound）
 │       ├── router/index.ts    # 路由表
-│       └── utils/             # layer.ts / db.ts / export.ts（+ wood.ts / seed.ts / id.ts）
+│       └── utils/             # layer.ts / delivery.ts / db.ts / export.ts（+ wood.ts / seed.ts / id.ts）
 ```
 
 ## 功能与路由
@@ -67,10 +67,12 @@ npm run build    # 类型检查 + 生产构建
 | `/chambers` | 槽腹尺寸记录 | 纳音/龙池/凤沼三处厚度、槽腹深度、天地柱与龙池凤沼尺寸，SVG 剖面标注 |
 | `/lacquer` | 灰胎髹漆遍次 | 按遍次累加厚度、荫房温湿度窗口校验、层积条与养护天数 |
 | `/stringing` | 上弦与音色评价 | 散音/按音/泛音三段纯文本评语、九德简述、缺陷标记与版本对照 |
+| `/delivery` | 成琴验收交付 | 五项验收检查；达标登记交付（v1、v2…版本号 + 快照冻结），未达标存待交付；退琴重髹撤销交付留档 |
 
 ## 数据存储说明
 
-- 全部数据存于浏览器 IndexedDB（Dexie，库名 `gbguqin-db`），表：`boards`、`chambers`、`lacquers`、`stringings`、`meta`。
-- `db.version(1)` 建表声明索引；`db.version(2).upgrade(...)` 为髹漆表增加 `[guqinNo+seq]` 复合索引并回填历史厚度。升级前可用顶栏「导出备份」导出全量 JSON。
+- 全部数据存于浏览器 IndexedDB（Dexie，库名 `gbguqin-db`），表：`boards`、`chambers`、`lacquers`、`stringings`、`deliveries`、`meta`。
+- `db.version(1)` 建表声明索引；`db.version(2).upgrade(...)` 为髹漆表增加 `[guqinNo+seq]` 复合索引并回填历史厚度；`db.version(3)` 新增 `deliveries` 成琴交付档案表。升级前可用顶栏「导出备份」导出全量 JSON（含交付档案）。
+- 交付档案在登记时刻把面板底板、槽腹尺寸、灰胎遍次与散音/按音/泛音评语冻结成独立快照，之后工序表（补髹漆、改评语等）的任何改动都不会回写档案；撤销交付只把状态改为「已撤销」不删记录，重新交付版本号 +1。
 - 首次打开且表为空时写入一批示例工序档案（`src/utils/seed.ts`）。
 - 容器无状态：不使用数据库服务、不挂载命名卷，`docker compose down` 后数据仍留在浏览器中。

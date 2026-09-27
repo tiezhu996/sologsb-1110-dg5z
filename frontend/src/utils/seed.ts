@@ -3,7 +3,9 @@ import type { WoodBoard } from '../types/wood-board';
 import type { SoundChamber } from '../types/sound-chamber';
 import type { LacquerLayer } from '../types/lacquer-layer';
 import type { Stringing } from '../types/stringing';
+import type { Delivery } from '../types/delivery';
 import { cumulativeThickness } from './layer';
+import { buildDeliverySnapshot, evaluateAcceptance, type AcceptanceSource } from './delivery';
 
 const DAY = 86_400_000;
 const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString();
@@ -130,25 +132,73 @@ export const SEED_STRINGINGS: Stringing[] = [
   },
 ];
 
+/** 示例交付档案：Q-2502 已交付 v1（快照与种子工序数据一致），Q-2504 未上弦先存待交付 */
+function buildSeedDeliveries(layers: LacquerLayer[]): Delivery[] {
+  const sourceOf = (guqinNo: string): AcceptanceSource => {
+    const boards = SEED_BOARDS.filter((b) => b.guqinNo === guqinNo);
+    return {
+      panel: boards.find((b) => b.part === '面板'),
+      base: boards.find((b) => b.part === '底板'),
+      chamber: SEED_CHAMBERS.find((c) => c.guqinNo === guqinNo),
+      layers: layers.filter((l) => l.guqinNo === guqinNo),
+      stringing: SEED_STRINGINGS.find((s) => s.guqinNo === guqinNo),
+    };
+  };
+  const deliveredSource = sourceOf('Q-2502');
+  const pendingSource = sourceOf('Q-2504');
+  return [
+    {
+      id: 'delivery-001',
+      guqinNo: 'Q-2502',
+      version: 1,
+      status: '已交付',
+      checks: evaluateAcceptance(deliveredSource),
+      ...buildDeliverySnapshot(deliveredSource),
+      registeredAt: daysAgo(5),
+      deliveredAt: daysAgo(5),
+      revokedAt: null,
+      revokeReason: null,
+      operator: '周砚秋',
+      remark: '首张成琴交付档案（示例）',
+    },
+    {
+      id: 'delivery-002',
+      guqinNo: 'Q-2504',
+      version: 0,
+      status: '待交付',
+      checks: evaluateAcceptance(pendingSource),
+      ...buildDeliverySnapshot(pendingSource),
+      registeredAt: daysAgo(1),
+      deliveredAt: null,
+      revokedAt: null,
+      revokeReason: null,
+      operator: '林听雪',
+      remark: '尚未上弦，先存待交付',
+    },
+  ];
+}
+
 /** 首次打开（表内无数据）时写入示例数据；已有数据则不动 */
 export async function seedIfEmpty(): Promise<void> {
   const flag = await db.meta.get('seeded');
   if (flag) {
     return;
   }
-  const [boardCount, chamberCount, lacquerCount, stringingCount] = await Promise.all([
+  const [boardCount, chamberCount, lacquerCount, stringingCount, deliveryCount] = await Promise.all([
     db.boards.count(),
     db.chambers.count(),
     db.lacquers.count(),
     db.stringings.count(),
+    db.deliveries.count(),
   ]);
   const layers = withCumulative(buildSeedLayers());
 
-  await db.transaction('rw', db.boards, db.chambers, db.lacquers, db.stringings, db.meta, async () => {
+  await db.transaction('rw', [db.boards, db.chambers, db.lacquers, db.stringings, db.deliveries, db.meta], async () => {
     if (boardCount === 0) await db.boards.bulkPut(SEED_BOARDS);
     if (chamberCount === 0) await db.chambers.bulkPut(SEED_CHAMBERS);
     if (lacquerCount === 0) await db.lacquers.bulkPut(layers);
     if (stringingCount === 0) await db.stringings.bulkPut(SEED_STRINGINGS);
+    if (deliveryCount === 0) await db.deliveries.bulkPut(buildSeedDeliveries(layers));
     await db.meta.put({ key: 'seeded', value: new Date().toISOString() });
   });
 }
